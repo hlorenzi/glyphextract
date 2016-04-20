@@ -19,8 +19,10 @@ namespace GlyphExtract
         {
             Console.WriteLine("GlyphExtract v0.1");
             Console.WriteLine("Copyright 2016 Henrique Lorenzi");
+            Console.WriteLine("Build date: 20 apr 2016");
 
             var parser = new Util.ParameterParser();
+            var paramOutput = parser.Add("out", "glyph#", "The name of the output files without extension; may contain a path. # will be substituted by the glyph index.");
             var paramSize = parser.Add("size", "32", "The size in which to render glyphs.");
             var paramCodepoints = parser.Add("codepoints", "0x00-0xff", "The list of Unicode codepoints to extract, in the format: $a,$b-$z,32,33,34-40,0x1af,0x200-0x3ff");
             var paramRenderMode = parser.Add("render-mode", "antialias-hint", "The glyph rendering mode, namely: binary, binary-hint, antialias, antialias-hint, cleartype");
@@ -188,7 +190,11 @@ namespace GlyphExtract
                         graphics.DrawLine(new System.Drawing.Pen(System.Drawing.Color.Blue), -1000, bottom, 1000, bottom);
                     }
 
-                    var outName = "glyph" + codepoint.ToString("x4");
+                    var outName = Path.GetFullPath(paramOutput.GetString()).Replace("#", codepoint.ToString("x4"));
+                    var outDir = Path.GetDirectoryName(outName);
+                    if (!Directory.Exists(outDir))
+                        Directory.CreateDirectory(outDir);
+
                     bitmap.Save(outName + ".png");
 
                     using (FileStream glyphXml = new FileStream(outName + ".sprsheet", FileMode.Create))
