@@ -1,369 +1,220 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Drawing;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.IO;
+
 
 namespace GlyphExtract
 {
     class Program
     {
-        class GlyphData
-        {
-            public int glyphIndex;
-            public int fileIndex;
-            public int baseline;
-            public int xOffset;
-            public int advanceWidth;
-            public int width, height;
-        }
-
         static void WriteText(Stream s, string str)
         {
             byte[] name = System.Text.Encoding.UTF8.GetBytes(str);
             s.Write(name, 0, name.Length);
         }
 
-        public static String MakeRelativePath(String fromPath, String toPath)
-        {
-            if (String.IsNullOrEmpty(fromPath)) throw new ArgumentNullException("fromPath");
-            if (String.IsNullOrEmpty(toPath)) throw new ArgumentNullException("toPath");
-
-            Uri fromUri = new Uri(fromPath);
-            Uri toUri = new Uri(toPath);
-
-            if (fromUri.Scheme != toUri.Scheme) { return toPath; } // path can't be made relative.
-
-            Uri relativeUri = fromUri.MakeRelativeUri(toUri);
-            String relativePath = Uri.UnescapeDataString(relativeUri.ToString());
-
-            if (toUri.Scheme.ToUpperInvariant() == "FILE")
-            {
-                relativePath = relativePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
-            }
-
-            return relativePath;
-        }
-
-        
-        static Dictionary<string, string> ParseArguments(string[] pArgs, string[] pParams)
-        {
-            Dictionary<string, string> dict = new Dictionary<string, string>();
-
-            foreach (string arg in pArgs)
-            {
-                foreach (string p in pParams)
-                {
-                    if (arg.StartsWith("-" + p + "="))
-                    {
-                        string a = arg.Substring(p.Length + 2, arg.Length - p.Length - 2);
-                        if (a.StartsWith("\""))
-                            a = a.Substring(1, a.Length - 2);
-
-                        dict.Add(p, a);
-                        goto next;
-                    }
-                }
-
-                if (!dict.ContainsKey(""))
-                {
-                    string a = arg;
-                    if (a.StartsWith("\""))
-                        a = a.Substring(1, a.Length - 2);
-
-                    dict.Add("", a);
-                }
-
-            next:
-                continue;
-            }
-
-            return dict;
-        }
-
-        static int CharValue(int c)
-        {
-            if (c >= (int)'0' && c <= (int)'9')
-                return (int)c - (int)'0';
-            else if (c >= (int)'a' && c <= (int)'f')
-                return 10 + ((int)c - (int)'a');
-            else if (c >= (int)'A' && c <= (int)'F')
-                return 10 + ((int)c - (int)'A');
-            else
-                return -1;
-        }
-
-        static void ParseIndices(string str, List<int> indices)
-        {
-            int i = 0;
-            int step = 0;
-            int firstChar = 0;
-            for (; ; )
-            {
-                if (i >= str.Length)
-                    break;
-
-                int readNumber = 0;
-                if (CharValue(str[i]) >= 0)
-                {
-                    readNumber = CharValue(str[i]);
-                    i++;
-                    int multiplier = 10;
-                    if (i < str.Length && str[i] == 'x')
-                    {
-                        multiplier = 16;
-                        i++;
-                        readNumber = 0;
-                    }
-
-                    while (i < str.Length && CharValue(str[i]) >= 0)
-                    {
-                        readNumber *= multiplier;
-                        readNumber += CharValue(str[i]);
-                        i++;
-                    }
-                }
-                else if (str[i] == '$')
-                {
-                    i++;
-                    readNumber = (int)str[i];
-                    i++;
-                }
-                else
-                    throw new FormatException();
-
-                if (step == 0)
-                    firstChar = readNumber;
-
-                if (step == 0 && i < str.Length && str[i] == '-')
-                {
-                    step = 1;
-                    i++;
-                }
-                else if (i >= str.Length || str[i] == ',')
-                {
-                    step = 0;
-                    if (firstChar > readNumber)
-                        throw new FormatException();
-
-                    for (int j = firstChar; j <= readNumber; j++)
-                    {
-                        indices.Add(j);
-                    }
-
-                    if (i < str.Length && str[i] == ',')
-                        i++;
-                }
-                else
-                    throw new FormatException();
-            }
-        }
 
         static void Main(string[] args)
         {
-            Console.Out.WriteLine("GlyphExtract Command Line -- v1.3");
-            Console.Out.WriteLine("Copyright 2015 Henrique Lorenzi");
-            Console.Out.WriteLine("");
-            
-            var parameters = ParseArguments(args, new string[] { /*"xmlout",*/ "unicode", "size" });
+            Console.WriteLine("GlyphExtract v0.1");
+            Console.WriteLine("Copyright 2016 Henrique Lorenzi");
 
-            if (args.Length == 0)
+            var parser = new Util.ParameterParser();
+            var paramSize = parser.Add("size", "32", "The size in which to render glyphs.");
+            var paramCodepoints = parser.Add("codepoints", "0x00-0xff", "The list of Unicode codepoints to extract, in the format: $a,$b-$z,32,33,34-40,0x1af,0x200-0x3ff");
+            var paramRenderMode = parser.Add("render-mode", "antialias-hint", "The glyph rendering mode, namely: binary, binary-hint, antialias, antialias-hint, cleartype");
+            var paramDebug = parser.Add("debug", "off", "Whether to draw debug information.");
+            var paramColor = parser.Add("color", "alpha-black", "The color to render the glyphs in, namely: alpha-white, alpha-black, grayscale");
+
+            if (!parser.Parse(args) ||
+                parser.GetUnnamed().Count != 1)
             {
-                Console.Out.WriteLine("Parameters:");
-                Console.Out.WriteLine("\tunnamed:  The input font file.");
-                //Console.Out.WriteLine("\t-xmlout:  The output XML file.");
-                Console.Out.WriteLine("\t-size:    The size in which to render glyphs, in em units.");
-                Console.Out.WriteLine("\t-unicode: The Unicode-mapped glyphs to extract, in the format: $a,$b-$z,32,33,34-40,0x1af,0x200-0x3ff");
+                Console.WriteLine("Parameters:");
+                parser.PrintHelp("  ");
+                return;
             }
-            else
+
+            var inputFile = parser.GetUnnamed()[0];
+            var glyphTypeface = new GlyphTypeface(new Uri("file:///" + Path.GetFullPath(inputFile)));
+
+            var size = paramSize.GetInt();
+            var codepoints = paramCodepoints.GetIntList();
+            var drawDebug = paramDebug.GetBool();
+
+            var color = System.Drawing.Color.White;
+            var bkgColor = System.Drawing.Color.FromArgb(0, color);
+            switch (paramColor.GetString())
             {
-                try
+                case "alpha-white":
+                    color = System.Drawing.Color.White;
+                    bkgColor = System.Drawing.Color.FromArgb(0, color);
+                    break;
+
+                case "alpha-black":
+                    color = System.Drawing.Color.Black;
+                    bkgColor = System.Drawing.Color.FromArgb(0, color);
+                    break;
+
+                /* FIXME: Bad interaction with glyph bounding box calculation */
+                case "grayscale":
+                    color = System.Drawing.Color.White;
+                    bkgColor = System.Drawing.Color.Black;
+                    break;
+            }
+
+            var renderHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
+            switch (paramRenderMode.GetString())
+            {
+                case "binary": renderHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixel; break;
+                case "binary-hint": renderHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit; break;
+                case "antialias": renderHint = System.Drawing.Text.TextRenderingHint.AntiAlias; break;
+                case "antialias-hint": renderHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit; break;
+                case "cleartype": renderHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit; break;
+            }
+
+            using (var fontColl = new System.Drawing.Text.PrivateFontCollection())
+            {
+                fontColl.AddFontFile(inputFile);
+                var font = new Font(fontColl.Families[0], size);
+
+                foreach (var codepoint in codepoints)
                 {
-                    string ttfin = Path.GetFullPath(parameters[""]);
+                    Console.Write("Extracting glyph for codepoint 0x" + codepoint.ToString("x4") + "...");
 
-                    //string xmlout = Path.GetDirectoryName(ttfin) + Path.DirectorySeparatorChar + Path.GetFileNameWithoutExtension(ttfin) + "_glyphs.xml";
-                    //if (parameters.ContainsKey("xmlout"))
-                    //    xmlout = parameters["xmlout"];
-
-                    double paramSize = 150;
-                    if (parameters.ContainsKey("size"))
-                        paramSize = Convert.ToDouble(parameters["size"]);
-
-                    List<int> wantedUnicode = new List<int>();
-
-                    if (parameters.ContainsKey("unicode"))
-                        ParseIndices(parameters["unicode"], wantedUnicode);
-                    else
+                    ushort glyph;
+                    if (!glyphTypeface.CharacterToGlyphMap.TryGetValue(codepoint, out glyph))
                     {
-                        for (int i = 0; i <= 127; i++)
-                            wantedUnicode.Add(i);
+                        Console.WriteLine(" no glyph found.");
+                        continue;
                     }
 
+                    var bitmapWidth = (int)((glyphTypeface.AdvanceWidths[glyph] - glyphTypeface.LeftSideBearings[glyph]) * size * 1.3f);
+                    var bitmapHeight = (int)((glyphTypeface.Baseline - glyphTypeface.TopSideBearings[glyph]) * size * 1.3f);
 
-
-
-                    GlyphTypeface glyphFace = new GlyphTypeface(new Uri("file:///" + ttfin));
-
-                    var glyphMap = glyphFace.CharacterToGlyphMap;
-
-                    List<GlyphData> result = new List<GlyphData>();
-
-                    double fontSize = paramSize;// *(72.0 / 96.0);
-
-                    double minY = 1e10;
-                    double maxY = -1e10;
-
-                    foreach (int wantedIndex in wantedUnicode)
+                    if (bitmapWidth <= 0 || bitmapHeight <= 0)
                     {
-                        try
+                        Console.WriteLine(" blank glyph.");
+                        continue;
+                    }
+
+                    var bitmap = new Bitmap(bitmapWidth * 2, bitmapHeight * 2);
+                    var graphics = Graphics.FromImage(bitmap);
+
+                    graphics.TextRenderingHint = renderHint;
+
+                    var format = new StringFormat();
+                    format.Alignment = StringAlignment.Center;
+                    format.LineAlignment = StringAlignment.Center;
+
+                    graphics.FillRectangle(
+                        new SolidBrush(bkgColor),
+                        0, 0, bitmapWidth, bitmapHeight);
+
+                    graphics.DrawString(
+                        new string((char)codepoint, 1),
+                        font,
+                        new SolidBrush(color),
+                        new PointF(bitmapWidth, bitmapHeight),
+                        format);
+
+                    var topmostDrawn = bitmap.Height;
+                    var leftmostDrawn = bitmap.Width;
+                    var bottommostDrawn = 0;
+                    var rightmostDrawn = 0;
+
+                    var bitmapData = bitmap.LockBits(
+                        new Rectangle(0, 0, bitmapWidth, bitmapHeight),
+                        System.Drawing.Imaging.ImageLockMode.ReadWrite,
+                        System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+                    unsafe
+                    {
+                        var bitmapPtrBase = (byte*)bitmapData.Scan0.ToPointer();
+
+                        for (var j = 0; j < bitmap.Height; j++)
                         {
-                            Console.Out.Write("Extracting unicode 0x" + wantedIndex.ToString("X4") + "... ");
-                            var glyphIndex = glyphMap[wantedIndex];
-                            Console.Out.Write("from glyph 0x" + glyphIndex.ToString("X4") + "... ");
-
-                            GlyphData data = new GlyphData();
-                            data.glyphIndex = glyphIndex;
-                            data.advanceWidth = (int)(fontSize * glyphFace.AdvanceWidths[glyphIndex]);
-
-                            Geometry geometry = glyphFace.GetGlyphOutline(glyphIndex, fontSize, fontSize);
-                            if (!geometry.IsEmpty())
+                            for (var i = 0; i < bitmap.Width; i++)
                             {
-                                DrawingVisual viz = new DrawingVisual();
-                                using (DrawingContext dc = viz.RenderOpen())
-                                {
-                                    dc.DrawRectangle(System.Windows.Media.Brushes.Transparent, null, new System.Windows.Rect(-1000, -1000, 2000, 2000));
+                                var bitmapPtr =
+                                    bitmapPtrBase +
+                                    j * bitmapData.Stride +
+                                    i * 4;
 
-                                    double xOffset = (-geometry.Bounds.Left) + 1;
-                                    double yOffset = (-geometry.Bounds.Top) + 1;
-                                    dc.PushTransform(new TranslateTransform(xOffset, yOffset));
-                                    dc.DrawGeometry(System.Windows.Media.Brushes.White, null, geometry);
-                                    dc.Pop();
+                                if (bitmapPtr[3] != 0)
+                                {
+                                    leftmostDrawn = Math.Min(i, leftmostDrawn);
+                                    topmostDrawn = Math.Min(j, topmostDrawn);
+                                    rightmostDrawn = Math.Max(i + 1, rightmostDrawn);
+                                    bottommostDrawn = Math.Max(j + 1, bottommostDrawn);
                                 }
-
-                                data.fileIndex = glyphIndex;
-                                data.baseline = -(int)geometry.Bounds.Top;
-                                data.xOffset = -(int)geometry.Bounds.Left;
-                                data.width = (int)Math.Ceiling(geometry.Bounds.Width) + 2;
-                                data.height = (int)Math.Ceiling(geometry.Bounds.Height) + 2;
-
-                                if (-data.baseline < minY) minY = -data.baseline;
-                                if (data.height - data.baseline > maxY) maxY = data.height - data.baseline;
-
-                                RenderTargetBitmap bmp = new RenderTargetBitmap(
-                                    (int)Math.Ceiling(geometry.Bounds.Width) + 2,
-                                    (int)Math.Ceiling(geometry.Bounds.Height) + 2,
-                                    96, 96, PixelFormats.Bgra32);
-                                bmp.Render(viz);
-
-                                var pngName = Path.GetDirectoryName(ttfin) + Path.DirectorySeparatorChar + "glyph" + glyphIndex.ToString("X4") + ".png";
-
-                                PngBitmapEncoder encoder = new PngBitmapEncoder();
-                                encoder.Frames.Add(BitmapFrame.Create(bmp));
-                                using (FileStream file = new FileStream(pngName, FileMode.Create))
-                                    encoder.Save(file);
-
-                                using (FileStream glyphXml = new FileStream(Path.GetFileNameWithoutExtension(pngName) + ".sprsheet", FileMode.Create))
+                                else
                                 {
-                                    WriteText(glyphXml, "<sprite-sheet src=\"" + Path.GetFileName(pngName) + "\">\n");
-                                    WriteText(glyphXml, "\t<sprite ");
-                                    WriteText(glyphXml, "name=\"" + glyphIndex.ToString("X4") + "\" ");
-                                    WriteText(glyphXml, "x=\"0\" ");
-                                    WriteText(glyphXml, "y=\"0\" ");
-                                    WriteText(glyphXml, "width=\"" + data.width + "\" ");
-                                    WriteText(glyphXml, "height=\"" + data.height + "\" ");
-                                    WriteText(glyphXml, "crop-left=\"0\" ");
-                                    WriteText(glyphXml, "crop-right=\"0\" ");
-                                    WriteText(glyphXml, "crop-top=\"0\" ");
-                                    WriteText(glyphXml, "crop-bottom=\"0\">\n");
-
-                                    WriteText(glyphXml, "\t\t<guide name=\"unicode\" kind=\"int\" value=\"" + wantedIndex + "\"></guide>\n");
-                                    WriteText(glyphXml, "\t\t<guide name=\"y-offset\" kind=\"int\" value=\"" + data.baseline + "\"></guide>\n");
-                                    WriteText(glyphXml, "\t\t<guide name=\"x-offset\" kind=\"int\" value=\"" + data.xOffset + "\"></guide>\n");
-                                    WriteText(glyphXml, "\t\t<guide name=\"x-advance\" kind=\"int\" value=\"" + data.advanceWidth + "\"></guide>\n");
-
-                                    WriteText(glyphXml, "\t</sprite>\n");
-                                    WriteText(glyphXml, "</sprite-sheet>\n");
+                                    bitmapPtr[2] = color.R;
+                                    bitmapPtr[1] = color.G;
+                                    bitmapPtr[0] = color.B;
                                 }
                             }
-                            else
-                            {
-                                data.fileIndex = -1;
-                            }
-
-                            result.Add(data);
-                            Console.Out.WriteLine("Done.");
-                        }
-                        catch (KeyNotFoundException)
-                        {
-                            Console.Out.WriteLine("Not found.");
                         }
                     }
 
-                    /*FileStream fileout = new FileStream(xmlout, FileMode.Create);
+                    bitmap.UnlockBits(bitmapData);
 
-                    WriteText(fileout, "<document>\n");
-                    WriteText(fileout, "\t<section version=\"1.0\" kind=\"fontmetrics\">\n");
-                    WriteText(fileout, "\t\t<bounds ymin=\"" + (int)minY + "\" ymax=\"" + (int)maxY + "\" />\n");
-                    WriteText(fileout, "\t</section>\n");
-
-                    WriteText(fileout, "\t<section version=\"1.0\" kind=\"glyphmap\">\n");
-                    foreach (int wantedChar in wantedUnicode)
+                    if (topmostDrawn >= bottommostDrawn || leftmostDrawn >= rightmostDrawn)
                     {
-                        try
-                        {
-                            WriteText(fileout, "\t\t<glyph index=\"" + glyphFace.CharacterToGlyphMap[wantedChar] + "\" unicode=\"" + wantedChar + "\" />\n");
-                        }
-                        catch (KeyNotFoundException)
-                        {
-
-                        }
+                        Console.WriteLine(" blank glyph.");
+                        continue;
                     }
-                    WriteText(fileout, "\t</section>\n");
 
-                    WriteText(fileout, "\t<section version=\"1.0\" kind=\"glyphmetrics\">\n");
-                    foreach (GlyphData data in result)
+                    var left = leftmostDrawn - (float)glyphTypeface.LeftSideBearings[glyph] * size * 1.3f;
+                    var right = leftmostDrawn + (float)(glyphTypeface.AdvanceWidths[glyph] - glyphTypeface.LeftSideBearings[glyph]) * size * 1.3f;
+                    var top = topmostDrawn - (float)(glyphTypeface.TopSideBearings[glyph]) * size * 1.3f;
+                    var baseline = topmostDrawn + (float)(glyphTypeface.CapsHeight - glyphTypeface.TopSideBearings[glyph]) * size * 1.3f;
+                    var bottom = topmostDrawn + (float)(glyphTypeface.Baseline - glyphTypeface.TopSideBearings[glyph]) * size * 1.3f;
+
+                    if (drawDebug)
                     {
-                        WriteText(fileout,
-                            "\t\t<glyph index=\"" + data.glyphIndex + "\" " +
-                            "width=\"" + data.width + "\" height=\"" + data.height + "\" " +
-                            "yoffset=\"" + data.baseline + "\" " +
-                            "xoffset=\"" + data.xOffset + "\" " +
-                            "xadvance=\"" + data.advanceWidth + "\" />\n");
-                    }
-                    WriteText(fileout, "\t</section>\n");
+                        graphics.DrawRectangle(
+                            new System.Drawing.Pen(System.Drawing.Color.Red),
+                            leftmostDrawn,
+                            topmostDrawn,
+                            rightmostDrawn - leftmostDrawn,
+                            bottommostDrawn - topmostDrawn);
 
-                    WriteText(fileout, "\t<section version=\"1.0\" kind=\"spritepacker\">\n");
-                    //abspath=\"" + Path.GetDirectoryName(xmlout).Replace('\\', '/') + "/" + "\" >\n");
-                    foreach (GlyphData data in result)
+                        graphics.DrawLine(new System.Drawing.Pen(System.Drawing.Color.Blue), left, -1000, left, 1000);
+                        graphics.DrawLine(new System.Drawing.Pen(System.Drawing.Color.Blue), right, -1000, right, 1000);
+                        graphics.DrawLine(new System.Drawing.Pen(System.Drawing.Color.Blue), -1000, top, 1000, top);
+                        graphics.DrawLine(new System.Drawing.Pen(System.Drawing.Color.Red), -1000, baseline, 1000, baseline);
+                        graphics.DrawLine(new System.Drawing.Pen(System.Drawing.Color.Blue), -1000, bottom, 1000, bottom);
+                    }
+
+                    var outName = "glyph" + codepoint.ToString("x4");
+                    bitmap.Save(outName + ".png");
+
+                    using (FileStream glyphXml = new FileStream(outName + ".sprsheet", FileMode.Create))
                     {
-                        if (data.fileIndex == -1)
-                            continue;
+                        WriteText(glyphXml, "<sprite-sheet src=\"" + Path.GetFileName(outName + ".png") + "\">\n");
+                        WriteText(glyphXml, "\t<sprite ");
+                        WriteText(glyphXml, "name=\"" + codepoint.ToString("X4") + "\" ");
+                        WriteText(glyphXml, "x=\"0\" ");
+                        WriteText(glyphXml, "y=\"0\" ");
+                        WriteText(glyphXml, "width=\"" + bitmap.Width + "\" ");
+                        WriteText(glyphXml, "height=\"" + bitmap.Height + "\" ");
+                        WriteText(glyphXml, "crop-left=\"" + leftmostDrawn + "\" ");
+                        WriteText(glyphXml, "crop-right=\"" + (bitmap.Width - rightmostDrawn) + "\" ");
+                        WriteText(glyphXml, "crop-top=\"" + topmostDrawn + "\" ");
+                        WriteText(glyphXml, "crop-bottom=\"" + (bitmap.Height - bottommostDrawn) + "\">\n");
 
-                        string filepath = Path.GetDirectoryName(ttfin) + Path.DirectorySeparatorChar + "glyph" + data.glyphIndex.ToString("X4") + ".png";
-                        string path = Program.MakeRelativePath(xmlout, filepath).Replace('\\', '/');
+                        WriteText(glyphXml, "\t\t<guide name=\"unicode\" kind=\"int\" value=\"" + codepoint + "\"></guide>\n");
+                        WriteText(glyphXml, "\t\t<guide name=\"y-offset\" kind=\"int\" value=\"" + Math.Floor(baseline) + "\"></guide>\n");
+                        WriteText(glyphXml, "\t\t<guide name=\"x-offset\" kind=\"int\" value=\"" + Math.Floor(left) + "\"></guide>\n");
+                        WriteText(glyphXml, "\t\t<guide name=\"x-advance\" kind=\"int\" value=\"" + Math.Floor(right - left) + "\"></guide>\n");
 
-                        WriteText(fileout,
-                            "\t\t<sprite " +
-                            "name=\"" + data.glyphIndex + "\" " +
-                            "relpath=\"" + path + "\" " +
-                            "width=\"" + data.width + "\" " +
-                            "height=\"" + data.height + "\" " +
-                            "/>\n");
+                        WriteText(glyphXml, "\t</sprite>\n");
+                        WriteText(glyphXml, "</sprite-sheet>\n");
                     }
-                    WriteText(fileout, "\t</section>\n");
-                    WriteText(fileout, "</document>");
 
-                    fileout.Close();*/
-                }
-                catch (Exception e)
-                {
-                    Console.Out.WriteLine("An error has occurred.");
-                    Console.Out.WriteLine(e.Message);
-                    Console.Out.WriteLine(e.StackTrace);
+                    Console.WriteLine(" done.");
                 }
             }
         }
