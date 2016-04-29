@@ -17,9 +17,9 @@ namespace GlyphExtract
 
         static void Main(string[] args)
         {
-            Console.WriteLine("GlyphExtract v0.1");
+            Console.WriteLine("GlyphExtract v0.2");
             Console.WriteLine("Copyright 2016 Henrique Lorenzi");
-            Console.WriteLine("Build date: 20 apr 2016");
+            Console.WriteLine("Build date: 26 apr 2016");
 
             var parser = new Util.ParameterParser();
             var paramOutput = parser.Add("out", "glyph#", "The name of the output files without extension; may contain a path. # will be substituted by the glyph index.");
@@ -28,6 +28,7 @@ namespace GlyphExtract
             var paramRenderMode = parser.Add("render-mode", "antialias-hint", "The glyph rendering mode, namely: binary, binary-hint, antialias, antialias-hint, cleartype");
             var paramDebug = parser.Add("debug", "off", "Whether to draw debug information.");
             var paramColor = parser.Add("color", "alpha-black", "The color to render the glyphs in, namely: alpha-white, alpha-black, grayscale");
+            var paramApproxMetrics = parser.Add("approx-metrics", "off", "Use an approximation for glyph metrics, to circumvent bugs.");
 
             if (!parser.Parse(args) ||
                 parser.GetUnnamed().Count != 1)
@@ -43,6 +44,7 @@ namespace GlyphExtract
             var size = paramSize.GetInt();
             var codepoints = paramCodepoints.GetIntList();
             var drawDebug = paramDebug.GetBool();
+            var approxMetrics = paramApproxMetrics.GetBool();
 
             var color = System.Drawing.Color.White;
             var bkgColor = System.Drawing.Color.FromArgb(0, color);
@@ -205,16 +207,26 @@ namespace GlyphExtract
                         WriteText(glyphXml, "x=\"0\" ");
                         WriteText(glyphXml, "y=\"0\" ");
                         WriteText(glyphXml, "width=\"" + bitmap.Width + "\" ");
-                        WriteText(glyphXml, "height=\"" + bitmap.Height + "\" ");
-                        WriteText(glyphXml, "crop-left=\"" + leftmostDrawn + "\" ");
-                        WriteText(glyphXml, "crop-right=\"" + (bitmap.Width - rightmostDrawn) + "\" ");
-                        WriteText(glyphXml, "crop-top=\"" + topmostDrawn + "\" ");
-                        WriteText(glyphXml, "crop-bottom=\"" + (bitmap.Height - bottommostDrawn) + "\">\n");
+                        WriteText(glyphXml, "height=\"" + bitmap.Height + "\">\n");
 
-                        WriteText(glyphXml, "\t\t<guide name=\"unicode\" kind=\"int\" value=\"" + codepoint + "\"></guide>\n");
-                        WriteText(glyphXml, "\t\t<guide name=\"y-offset\" kind=\"int\" value=\"" + Math.Floor(baseline) + "\"></guide>\n");
-                        WriteText(glyphXml, "\t\t<guide name=\"x-offset\" kind=\"int\" value=\"" + Math.Floor(left) + "\"></guide>\n");
-                        WriteText(glyphXml, "\t\t<guide name=\"x-advance\" kind=\"int\" value=\"" + Math.Floor(right - left) + "\"></guide>\n");
+                        WriteText(glyphXml, "\t\t<guide name=\"unicode\" kind=\"string\" value=\"" + codepoint + "\"></guide>\n");
+
+                        if (approxMetrics)
+                        {
+                            WriteText(glyphXml, "\t\t<guide name=\"base-advance\" kind=\"vector\" " +
+                                " x1=\"" + (leftmostDrawn) + "\" " +
+                                " x2=\"" + (rightmostDrawn) + "\" " +
+                                " y1=\"" + (bottommostDrawn) + "\" " +
+                                " y2=\"" + (bottommostDrawn) + "\"></guide>\n");
+                        }
+                        else
+                        {
+                            WriteText(glyphXml, "\t\t<guide name=\"base-advance\" kind=\"vector\" " +
+                                " x1=\"" + Math.Floor(left) + "\" " +
+                                " x2=\"" + Math.Floor(right - left) + "\" " +
+                                " y1=\"" + Math.Floor(baseline) + "\" " +
+                                " y2=\"" + Math.Floor(baseline) + "\"></guide>\n");
+                        }
 
                         WriteText(glyphXml, "\t</sprite>\n");
                         WriteText(glyphXml, "</sprite-sheet>\n");
